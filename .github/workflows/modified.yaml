@@ -1,0 +1,75 @@
+name: Nightly CI
+
+# CINTENT >> MANUAL_TRIGGER
+# on:
+#   workflow_dispatch:
+#   schedule:
+#     # * is a special character in YAML so you have to quote this string
+#     #         ┌───────────── minute (0 - 59)
+#     #         │ ┌───────────── hour (0 - 23)
+#     #         │ │ ┌───────────── day of the month (1 - 31)
+#     #         │ │ │ ┌───────────── month (1 - 12 or JAN-DEC)
+#     #         │ │ │ │ ┌───────────── day of the week (0 - 6 or SUN-SAT)
+#     #         │ │ │ │ │
+#     #         │ │ │ │ │
+#     #         │ │ │ │ │
+#     - cron:  '0 18 * * *'
+on: [repository_dispatch, workflow_dispatch]
+
+jobs:
+  nightly:
+    name: Run Nightly CI
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8]
+    env:
+      IMAGE_REPO: "milvusdb"
+      TAG_PREFIX: "master-"
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get the latest of Milvus dev image tag
+      shell: bash
+      id: extracter
+      working-directory: ci/scripts
+      run: echo "::set-output name=tag::$(./docker_image_find_tag.sh -n ${IMAGE_REPO}/milvus-dev -t ${TAG_PREFIX}latest -f ${TAG_PREFIX} -F -L -q)"
+
+    - name: Install Milvus
+      working-directory: ci/docker/milvus
+      run: |
+        IMAGE_TAG=${{ steps.extracter.outputs.tag }}  docker-compose up -d
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    # CINTENT >> INSERT_CINTENT
+    - uses: JavidDitty/setup-cintent@a606c80c34ec190c6a20dea33d6d58ddb6c4e0cc
+
+    - name: Clone Milvus Repo
+      uses: actions/checkout@v4
+      with:
+        repository: milvus-io/milvus
+        path: 'milvus'
+
+    - name: Install PyMilvus
+      run: |
+        python3 -m pip install setuptools --upgrade
+        python3 -m pip install --no-cache-dir -r milvus/tests/python_client/requirements.txt
+        python3 -m pip uninstall -y pymilvus
+        python3 setup.py install
+
+    - name: Smoke Test
+      working-directory: milvus/tests/python_client
+      run: |
+        pytest -n 2 --tags L0 L1
+
+    # CINTENT >> INSERT_CINTENT
+    - name: Upload CIntent Artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ${{ env.CINTENT_ARTIFACT_NAME }}
+        path: ${{ env.CINTENT_LOGS }}
